@@ -259,6 +259,7 @@ class PPOLearner(RLLearner):
         if self.critic is not None:
             self.critic.train()
         st = time.time()
+        st_total = time.time()
 
         logging.info(
             f"start learn() buffer_len={len(self.pi_buffer)} dl_len={len(dataloader)}"
@@ -290,7 +291,7 @@ class PPOLearner(RLLearner):
         train_info = {
             "learning_round": learning_round,
             "learn_batch_time": np.mean(learn_batch_time),
-            "total_time": time.time() - st,
+            "total_time": time.time() - st_total,
             **tree.map_structure(lambda x: x.cpu().float().mean().item(), infos),
         }
         train_info = {
