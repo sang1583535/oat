@@ -23,6 +23,7 @@ from typing import Any, List, Literal, Tuple
 import numpy as np
 import torch
 import tree
+import vllm
 from datasets import concatenate_datasets
 from torch.utils.data import DataLoader
 
@@ -223,11 +224,25 @@ class ZeroMathActor(PPOActor):
         """Main logic for the actor to generate trajectories (reasoning traces)."""
         assert not self.eval_mode
         info = {}
-        logging.info(f"actor start")
+        num_samples = self.sampling_params.n
+        num_prompts = len(formatted_prompts)
 
         # step 1. generate
         st = time.time()
-        outputs = self.generate(formatted_prompts, self.sampling_params)
+        expanded_prompts = []
+        for p in formatted_prompts:
+            expanded_prompts.extend([p] * num_samples)
+
+        sampling_params_n1 = vllm.SamplingParams(
+            temperature=self.sampling_params.temperature,
+            top_p=self.sampling_params.top_p,
+            top_k=self.sampling_params.top_k,
+            max_tokens=self.sampling_params.max_tokens,
+            n=1,  # Use n=1 to work around V1 bug
+            logprobs=1,  # Need logprobs for training
+        )
+
+        outputs = self.generate(expanded_prompts, sampling_params_n1)
 
         candidates = []
         prompt_token_ids = []
@@ -235,19 +250,24 @@ class ZeroMathActor(PPOActor):
         response_ids = []
         response_logprobs = []
         resp_lens = []
-        for i in range(len(outputs)):
-            # for each prompt
-            prompt_token_ids.append(outputs[i].prompt_token_ids)
+
+        for i in range(num_prompts):
+            start_idx = i * num_samples
+            end_idx = start_idx + num_samples
+            prompt_outputs = outputs[start_idx:end_idx]
+
+            prompt_token_ids.append(prompt_outputs[0].prompt_token_ids)
             candidates.append([])
             response_logprobs.append([])
             response_ids.append([])
-            for k in range(self.sampling_params.n):
-                # for each response
-                candidates[i].append(outputs[i].outputs[k].text)
-                no_eos.append(outputs[i].outputs[k].finish_reason == "length")
-                token_ids = outputs[i].outputs[k].token_ids
-                logps = outputs[i].outputs[k].logprobs
-                logps = [item[token_ids[i]].logprob for i, item in enumerate(logps)]
+
+            for k, out in enumerate(prompt_outputs):
+                completion = out.outputs[0]
+                candidates[i].append(completion.text)
+                no_eos.append(completion.finish_reason == "length")
+                token_ids = completion.token_ids
+                logps = completion.logprobs
+                logps = [item[token_ids[j]].logprob for j, item in enumerate(logps)]
                 response_logprobs[i].append(logps)
                 response_ids[i].append(token_ids)
                 resp_lens.append(len(token_ids))
