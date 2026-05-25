@@ -58,6 +58,7 @@ class SFTLearner(OfflineLearner):
         data = load_data_from_disk_or_hf(args.chat_data)[args.train_split]
         all_shards = []
         drop_cnt = 0
+        max_train = args.max_train if args.max_train and args.max_train > 0 else None
         for item in tqdm(
             data, desc="loading SFT chat data", disable=not strategy.is_rank_0()
         ):
@@ -77,9 +78,11 @@ class SFTLearner(OfflineLearner):
                     messages=item[args.msg_key],
                 )
             )
+            if max_train is not None and len(all_shards) >= max_train:
+                break
         logging.info(f"[Dataset] Dropped {drop_cnt} samples with too long prompts.")
-
-        all_shards = all_shards[: args.max_train]
+        if max_train is not None:
+            all_shards = all_shards[:max_train]
         self.all_buffer: List[TrajectoryData] = shard_buffer(
             all_shards,
             dist.get_rank(),
