@@ -515,13 +515,26 @@ def validate_and_process_chat_messages(tokenizer, chat):
             - 'tokens': list of token ids
     """
 
-    if len(chat) % 2 != 0:
-        return {"is_valid": False, "reason": "Odd number of messages"}
+    if not chat:
+        return {"is_valid": False, "reason": "Empty chat"}
 
-    for i in range(0, len(chat), 2):
+    system_offset = 1 if chat[0]["role"] == "system" else 0
+
+    for i, message in enumerate(chat):
+        if message["role"] == "system" and i != 0:
+            return {"is_valid": False, "reason": "System message not at the beginning"}
+
+    dialogue = chat[system_offset:]
+    if not dialogue:
+        return {"is_valid": False, "reason": "Empty dialogue after system message"}
+
+    if len(dialogue) % 2 != 0:
+        return {"is_valid": False, "reason": "Odd number of non-system messages"}
+
+    for i in range(0, len(dialogue), 2):
         if (
-            chat[i]["role"] not in ["user", "tool"]
-            or chat[i + 1]["role"] != "assistant"
+            dialogue[i]["role"] not in ["user", "tool"]
+            or dialogue[i + 1]["role"] != "assistant"
         ):
             return {"is_valid": False, "reason": f"Invalid role pairing at turn {i//2}"}
 
@@ -532,9 +545,9 @@ def validate_and_process_chat_messages(tokenizer, chat):
 
     response_ranges = []
 
-    for i in range(0, len(chat), 2):
+    for i in range(0, len(dialogue), 2):
         # locate each turn's context
-        sub_chat_context = chat[: i + 1]
+        sub_chat_context = chat[: system_offset + i + 1]
         rendered_context_up_to_now = tokenizer.apply_chat_template(
             sub_chat_context, tokenize=False, add_generation_prompt=True
         )
@@ -544,7 +557,7 @@ def validate_and_process_chat_messages(tokenizer, chat):
         start = len(tokens)
 
         # include each turn's completion
-        sub_chat = chat[: i + 2]
+        sub_chat = chat[: system_offset + i + 2]
         rendered_up_to_now = tokenizer.apply_chat_template(sub_chat, tokenize=False)
         tokens = tokenizer(rendered_up_to_now, add_special_tokens=False)["input_ids"]
         end = len(tokens)
@@ -553,7 +566,7 @@ def validate_and_process_chat_messages(tokenizer, chat):
 
     return {
         "is_valid": True,
-        "num_turns": len(chat) // 2,
+        "num_turns": len(dialogue) // 2,
         "response_ranges": response_ranges,
         "tokens": input_ids,
     }
